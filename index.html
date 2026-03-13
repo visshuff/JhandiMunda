@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jhandi Munda - Fantasy 11</title>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #064e3b; color: white; text-align: center; padding: 20px; margin: 0; }
+        .header { background: rgba(0,0,0,0.2); padding: 15px; border-bottom: 2px solid #fbbf24; display: flex; justify-content: space-between; align-items: center; }
+        .balance-box { font-size: 20px; font-weight: 800; color: #fbbf24; }
+        .dice-area { display: flex; justify-content: center; gap: 8px; margin: 25px 0; }
+        .die { background: white; color: #333; width: 55px; height: 55px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 28px; border: 3px solid #ddd; }
+        .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; max-width: 450px; margin: 20px auto; }
+        .symbol-card { background: #065f46; border: 2px solid rgba(251, 191, 36, 0.3); border-radius: 15px; padding: 15px; cursor: pointer; }
+        .symbol-card.selected { border-color: #fbbf24; background: #fbbf24; color: #064e3b; }
+        .symbol-card span { font-size: 45px; display: block; }
+        .controls { margin-top: 30px; background: rgba(0,0,0,0.2); padding: 20px; border-radius: 20px; }
+        input { padding: 12px; border-radius: 10px; border: none; width: 100px; font-size: 18px; text-align: center; }
+        .btn-roll { padding: 12px 30px; border-radius: 10px; border: none; background: #fbbf24; color: #064e3b; font-weight: 900; cursor: pointer; }
+        .status { margin-top: 20px; font-size: 18px; font-weight: 600; min-height: 25px; }
+        .back-btn { background: none; border: 1px solid white; color: white; padding: 5px 10px; border-radius: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <button class="back-btn" onclick="window.history.back()">← Back</button>
+    <div class="balance-box">Wallet: ₹<span id="uBalDisplay">0.0</span></div>
+</div>
+
+<div class="dice-area" id="diceContainer">
+    <div class="die">?</div><div class="die">?</div><div class="die">?</div>
+    <div class="die">?</div><div class="die">?</div><div class="die">?</div>
+</div>
+
+<div class="board" id="board">
+    <div class="symbol-card" onclick="selectSymbol('🚩', this)"><span>🚩</span>Jhandi</div>
+    <div class="symbol-card" onclick="selectSymbol('♠️', this)"><span>♠️</span>Hukum</div>
+    <div class="symbol-card" onclick="selectSymbol('♣️', this)"><span>♣️</span>Chidi</div>
+    <div class="symbol-card" onclick="selectSymbol('♦️', this)"><span>♦️</span>Eet</div>
+    <div class="symbol-card" onclick="selectSymbol('♥️', this)"><span>♥️</span>Paan</div>
+    <div class="symbol-card" onclick="selectSymbol('👑', this)"><span>👑</span>Munda</div>
+</div>
+
+<div class="controls">
+    <input type="number" id="betAmt" value="10" min="10">
+    <button id="rollBtn" class="btn-roll" onclick="playRound()">ROLL</button>
+    <div class="status" id="gameStatus">Symbol select karein!</div>
+</div>
+
+<script>
+    // 1. Firebase Configuration (Aapki app se same)
+    const firebaseConfig = { 
+        apiKey: "AIzaSyC1JNoVhrChwujJucOZuEN6KEwIbgKZ6b4", 
+        authDomain: "snapvibe-ontop.firebaseapp.com", 
+        databaseURL: "https://snapvibe-ontop-default-rtdb.firebaseio.com" 
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // 2. Get UID from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const currentUid = urlParams.get('uid');
+
+    let uBal = 0, uWinBal = 0, selectedSymbol = "", roundCount = 0;
+    const symbols = ['🚩', '♠️', '♣️', '♦️', '♥️', '👑'];
+    const winPattern = [false, true, false, true, false]; // 5 me se 2 win
+
+    if (!currentUid) {
+        alert("Pehle Login Karein!");
+        window.location.href = "index.html";
+    }
+
+    // 3. Real-time Balance Sync
+    db.ref('users/' + currentUid).on('value', s => {
+        const d = s.val() || {};
+        uBal = d.balance || 0;
+        uWinBal = d.winBal || 0;
+        document.getElementById('uBalDisplay').innerText = (uBal + uWinBal).toFixed(1);
+    });
+
+    function selectSymbol(sym, el) {
+        selectedSymbol = sym;
+        document.querySelectorAll('.symbol-card').forEach(c => c.classList.remove('selected'));
+        el.classList.add('selected');
+        document.getElementById('gameStatus').innerText = "Selected: " + sym;
+    }
+
+    async function playRound() {
+        let amt = parseInt(document.getElementById('betAmt').value);
+        if (!selectedSymbol) return alert("Pehle symbol select karein!");
+        if (amt < 10) return alert("Min bet ₹10 hai!");
+        if ((uBal + uWinBal) < amt) return alert("Balance kam hai!");
+
+        // Disable button
+        const btn = document.getElementById('rollBtn');
+        btn.disabled = true;
+        document.getElementById('gameStatus').innerText = "Rolling...";
+
+        // 4. Update Balance in Firebase (Transaction)
+        db.ref('users/' + currentUid).transaction(userData => {
+            if (userData) {
+                let rem = amt;
+                if (userData.balance >= rem) { userData.balance -= rem; } 
+                else { rem -= userData.balance; userData.balance = 0; userData.winBal -= rem; }
+                return userData;
+            }
+        }, async (error, committed) => {
+            if (committed) {
+                processRoll(amt);
+            } else {
+                btn.disabled = false;
+                alert("Error: Bet failed!");
+            }
+        });
+    }
+
+    function processRoll(amt) {
+        roundCount++;
+        let shouldUserWin = winPattern[roundCount - 1];
+        let diceResults = [];
+        let otherSymbols = symbols.filter(s => s !== selectedSymbol);
+
+        if (shouldUserWin) {
+            let matchCount = Math.floor(Math.random() * 3) + 1; // 1 to 3 matches
+            for(let i=0; i<matchCount; i++) diceResults.push(selectedSymbol);
+            for(let i=matchCount; i<6; i++) diceResults.push(otherSymbols[Math.floor(Math.random() * otherSymbols.length)]);
+        } else {
+            for(let i=0; i<6; i++) diceResults.push(otherSymbols[Math.floor(Math.random() * otherSymbols.length)]);
+        }
+
+        diceResults.sort(() => Math.random() - 0.5);
+
+        // Animation and Display
+        setTimeout(() => {
+            const container = document.getElementById('diceContainer');
+            container.innerHTML = "";
+            diceResults.forEach(res => {
+                container.innerHTML += `<div class="die">${res}</div>`;
+            });
+
+            let matches = diceResults.filter(s => s === selectedSymbol).length;
+            let multipliers = { 1: 1.40, 2: 1.80, 3: 2.20, 4: 2.70 };
+            
+            if (matches > 0) {
+                let mult = multipliers[matches] || 1.40;
+                let winAmt = Math.floor(amt * mult);
+                
+                // 5. Add Winning to WinBal
+                db.ref('users/' + currentUid + '/winBal').transaction(b => (b || 0) + winAmt);
+                db.ref('transactions/' + currentUid).push({ type: "Jhandi Win", amount: winAmt, date: Date.now() });
+                
+                document.getElementById('gameStatus').innerHTML = `<span style="color:#4ade80">WIN! ₹${winAmt} (${mult}x)</span>`;
+            } else {
+                db.ref('transactions/' + currentUid).push({ type: "Jhandi Bet", amount: -amt, date: Date.now() });
+                document.getElementById('gameStatus').innerHTML = `<span style="color:#f87171">LOSS! Agli baar try karein.</span>`;
+            }
+
+            if(roundCount >= 5) roundCount = 0;
+            document.getElementById('rollBtn').disabled = false;
+        }, 1200);
+    }
+</script>
+</body>
+</html>
